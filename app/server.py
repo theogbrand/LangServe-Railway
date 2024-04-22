@@ -212,7 +212,7 @@ def llm_fallback(state):
     Returns:
         state (dict): New key added to state, generation, that contains LLM generation
     """
-    print("---LLM Fallback---")
+    print("---LLM Fallback Activated---")
     question = state["question"]
     generation = llm_falback_chain.invoke({"question": question})
     return {"question": question, "generation": generation}
@@ -234,8 +234,8 @@ from langchain_core.runnables import chain
 
 
 @chain
-def custom_chain(text):
-  inputs = {"messages": [HumanMessage(content=text["question"])]}
+def custom_chain(json_input: dict):
+  inputs = {"question": json_input["question"]}
   return graph.invoke(inputs)
 
 add_routes(
