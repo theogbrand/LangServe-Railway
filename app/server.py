@@ -32,7 +32,7 @@ prompt = lambda x: ChatPromptTemplate.from_messages(
 )
 
 # Chain
-llm_falback_chain = prompt | llm | StrOutputParser()
+test_query_chain = prompt | llm | StrOutputParser()
 
 
 from langgraph.graph import END, StateGraph
@@ -65,7 +65,7 @@ def llm_fallback(state):
     """
     print("---LLM Fallback Activated---")
     question = state["question"]
-    generation = llm_falback_chain.invoke({"question": question})
+    generation = test_query_chain.invoke({"question": question})
     return {"question": question, "generation": generation}
 
 workflow.add_node("llm_fallback", llm_fallback) # llm
