@@ -1052,6 +1052,20 @@ langchain-core = ">=0.1.28,<0.2.0"
 extended-testing = ["lxml (>=5.1.0,<6.0.0)"]
 
 [[package]]
+name = "langgraph"
+version = "0.0.38"
+description = "langgraph"
+optional = false
+python-versions = "<4.0,>=3.9.0"
+files = [
+    {file = "langgraph-0.0.38-py3-none-any.whl", hash = "sha256:8b26f025f2163019cb38e677f6cef8d8f944e791f7ddb84402c211e7432e8330"},
+    {file = "langgraph-0.0.38.tar.gz", hash = "sha256:c13ce73c4764787e31f20854ebae505140ee5b750e8ba07c29e45969ce591c7b"},
+]
+
+[package.dependencies]
+langchain-core = ">=0.1.42,<0.2.0"
+
+[[package]]
 name = "langserve"
 version = "0.0.46"
 description = ""
@@ -2513,4 +2527,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "d68c3ff928f6043f5ea003dbb43db17f20fc273dc3e3f88fdedf362175232b40"
+content-hash = "3450e5b167730f1334e92aa4153b4798ed2f1cbf86f25b2bd8fb2937cdf179cf"

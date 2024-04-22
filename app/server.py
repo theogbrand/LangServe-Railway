@@ -154,19 +154,114 @@ class ChatHistory(BaseModel):
 conversational_qa_chain = (
     _inputs | _context | ANSWER_PROMPT | ChatAnthropic() | StrOutputParser()
 )
-chain = conversational_qa_chain.with_types(input_type=ChatHistory)
+convo_chain = conversational_qa_chain.with_types(input_type=ChatHistory)
+
+
+### LLM fallback
+
+from langchain import hub
+from langchain_core.output_parsers import StrOutputParser
+import langchain
+from langchain_core.messages import HumanMessage
+
+
+# Preamble
+preamble = """You are a fallback customer support assistant. You will be given a question you cannot answer based on internal knowledge. Reply the user politely that their request will be transferred to a live agent"""
+
+# LLM
+llm = ChatAnthropic()
+
+# Prompt
+prompt = lambda x: ChatPromptTemplate.from_messages(
+    [
+        HumanMessage(
+            f"Question: {x['question']} \nAnswer: "
+        )
+    ]
+)
+
+# Chain
+llm_falback_chain = prompt | llm | StrOutputParser()
+
+
+from langgraph.graph import END, StateGraph
+from typing_extensions import TypedDict
+from typing import List
+
+class GraphState(TypedDict):
+    """
+    Represents the state of our graph.
+
+    Attributes:
+        question: question
+        generation: LLM generation
+        documents: list of documents 
+    """
+    question : str
+    generation : str
+    # documents : List[str]
+
+workflow = StateGraph(GraphState)
+def llm_fallback(state):
+    """
+    Generate answer using the LLM w/o vectorstore
+
+    Args:
+        state (dict): The current graph state
+
+    Returns:
+        state (dict): New key added to state, generation, that contains LLM generation
+    """
+    print("---LLM Fallback---")
+    question = state["question"]
+    generation = llm_falback_chain.invoke({"question": question})
+    return {"question": question, "generation": generation}
+
+workflow.add_node("llm_fallback", llm_fallback) # llm
+
+workflow.set_entry_point("llm_fallback")
+workflow.add_edge("llm_fallback", END)
+
+graph = workflow.compile()
 
 app = FastAPI(
     title="LangChain Server",
     version="1.0",
     description="Spin up a simple api server using Langchain's Runnable interfaces",
 )
+
+from langchain_core.runnables import chain
+
+
+@chain
+def custom_chain(text):
+  inputs = {"messages": [HumanMessage(content=text["question"])]}
+  return graph.invoke(inputs)
+
+add_routes(
+    app,
+    custom_chain,
+    # convo_chain,
+    path="/chat"
+)
+
 # Adds routes to the app for using the chain under:
 # /invoke
 # /batch
 # /stream
-add_routes(app, chain, enable_feedback_endpoint=True)
+add_routes(app, convo_chain, enable_feedback_endpoint=True)
 
+from fastapi.middleware.cors import CORSMiddleware
+
+# Set all CORS enabled origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 if __name__ == "__main__":
     import uvicorn
 
