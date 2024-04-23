@@ -78,6 +78,51 @@ vectorstore = Chroma.from_documents(
 retriever = vectorstore.as_retriever()
 
 
+
+### Router
+from typing import Literal
+
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_cohere import ChatCohere
+
+# Data model
+class sql_database_search(BaseModel):
+    """
+    A sql database containing the ORDERS table, which stores data about the customer's order information including order shipment details, last payment made and subscription status.
+    """
+    query: str = Field(description="The query to use when fetching information from the sql database.")
+
+class vectorstore(BaseModel):
+    """
+    A vectorstore containing documents related to product information, Athletic Greens, also known as AG1. Use the vectorstore for questions on details relating to what the product is, how the product was manufactured and the story behind the product.
+    """
+    query: str = Field(description="The query to use when searching the vectorstore.")
+
+# Preamble
+preamble = """You are an expert at routing a user question to a vectorstore or sql_database.
+The vectorstore contains documents related to product details. Use the vectorstore for questions relating to information about the product, Athletic Greens. Otherwise, use the sql_database to answer questions relating to customer order information, such as order shipment details, last payment made and subscription status."""
+
+# LLM with tool use and preamble
+llm = ChatCohere(model="command-r", temperature=0)
+structured_llm_router = llm.bind_tools(tools=[sql_database_search, vectorstore], preamble=preamble)
+
+# Prompt
+route_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("human", "{question}"),
+    ]
+)
+
+question_router = route_prompt | structured_llm_router
+# response = question_router.invoke({"question": "Where is my order?"})
+# print(response.response_metadata['tool_calls'])
+# response = question_router.invoke({"question": "What ingredients does AG1 contain?"})
+# print(response.response_metadata['tool_calls'])
+# response = question_router.invoke({"question": "Hi how are you?"})
+# print('tool_calls' in response.response_metadata)
+
+
 # Chain
 test_query_chain = prompt | llm | StrOutputParser()
 
@@ -137,11 +182,16 @@ def root():
 
 @app.get("/test")
 def retrieve_test():
-    question = "agent memory?"
-    docs = retriever.get_relevant_documents(question)
+    response = question_router.invoke({"question": "What ingredients does AG1 contain?"})
     return {
-        "message": docs[1].page_content,
+        "message": response.response_metadata['tool_calls'],
     }
+
+    # question = "agent memory?"
+    # docs = retriever.get_relevant_documents(question)
+    # return {
+    #     "message": docs[1].page_content,
+    # }
 
 
 @app.get("/ping")
