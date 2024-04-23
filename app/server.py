@@ -262,7 +262,7 @@ class GraphState(TypedDict):
     generation : str
     documents : List[str]
 
-workflow = StateGraph(GraphState)
+
 def llm_fallback(state):
     """
     Generate answer using the LLM w/o vectorstore
@@ -273,17 +273,263 @@ def llm_fallback(state):
     Returns:
         state (dict): New key added to state, generation, that contains LLM generation
     """
-    print("---LLM Fallback Activated---")
+    print("---LLM Fallback---")
     question = state["question"]
-    generation = test_query_chain.invoke({"question": question})
+    generation = llm_chain.invoke({"question": question})
     return {"question": question, "generation": generation}
 
+def retrieve(state):
+    """
+    Retrieve documents
+
+    Args:
+        state (dict): The current graph state
+
+    Returns:
+        state (dict): New key added to state, documents, that contains retrieved documents
+    """
+    print("---RETRIEVE---")
+    question = state["question"]
+
+    # Retrieval
+    documents = retriever.invoke(question)
+    return {"documents": documents, "question": question}
+
+def generate(state):
+    """
+    Generate answer
+
+    Args:
+        state (dict): The current graph state
+
+    Returns:
+        state (dict): New key added to state, generation, that contains LLM generation
+    """
+    print("---GENERATE---")
+    question = state["question"]
+    documents = state["documents"]
+    
+    # RAG generation
+    generation = rag_chain.invoke({"context": documents, "question": question})
+    return {"documents": documents, "question": question, "generation": generation}
+
+def grade_documents(state):
+    """
+    Determines whether the retrieved documents are relevant to the question.
+
+    Args:
+        state (dict): The current graph state
+
+    Returns:
+        state (dict): Updates documents key with only filtered relevant documents
+    """
+
+    print("---CHECK DOCUMENT RELEVANCE TO QUESTION---")
+    question = state["question"]
+    documents = state["documents"]
+    
+    # Score each doc
+    filtered_docs = []
+    for d in documents:
+        score = retrieval_grader.invoke({"question": question, "document": d.page_content})
+        grade = score.binary_score
+        if grade == "yes":
+            print("---GRADE: DOCUMENT RELEVANT---")
+            filtered_docs.append(d)
+        else:
+            print("---GRADE: DOCUMENT NOT RELEVANT---")
+            continue
+    return {"documents": filtered_docs, "question": question}
+
+def sql_database_search(state):
+    """
+    SQL database search based on the re-phrased question.
+
+    Args:
+        state (dict): The current graph state
+
+    Returns:
+        state (dict): Updates documents key with appended web results
+    """
+
+    print("---NL TO SQL SEARCH (sql_database_search)---")
+    question = state["question"]
+
+    sql_based_answer = agent_executor.invoke({"input": question})
+    return {"input": question,"documents": sql_based_answer["output"] }
+
+### Edges ###
+
+def route_question(state):
+    """
+    Route question to sql database search or RAG.
+
+    Args:
+        state (dict): The current graph state
+
+    Returns:
+        str: Next node to call
+    """
+
+    # route via tool calls
+    print("---ROUTE QUESTION---")
+    question = state["question"]
+    source = question_router.invoke({"question": question})
+    
+    # Fallback to LLM or raise error if no decision
+    if "tool_calls" not in source.additional_kwargs:
+        print("---ROUTE QUESTION TO LLM---")
+        return "llm_fallback" 
+    if len(source.additional_kwargs["tool_calls"]) == 0:
+      raise "Router could not decide source"
+
+    # Choose datasource
+    print("choosing datasource")
+    datasource = source.additional_kwargs["tool_calls"][0]["function"]["name"]
+    print("choosing: ", datasource)
+    if datasource == 'sql_database_search':
+        print("---ROUTE QUESTION TO SQL DATABASE SEARCH---")
+        return "sql_database_search"
+    elif datasource == 'vectorstore':
+        print("---ROUTE QUESTION TO RAG---")
+        return "vectorstore"
+
+def decide_to_generate(state):
+    """
+    Determines whether to generate an answer, or re-generate a question.
+
+    Args:
+        state (dict): The current graph state
+
+    Returns:
+        str: Binary decision for next node to call
+    """
+
+    print("---ASSESS GRADED DOCUMENTS---")
+    question = state["question"]
+    filtered_documents = state["documents"]
+
+    if not filtered_documents:
+        # All documents have been filtered check_relevance
+        # We will re-generate a new query
+        # print("---DECISION: ALL DOCUMENTS ARE NOT RELEVANT TO QUESTION, TRANSFORM QUERY---")
+        print("---DECISION: ALL DOCUMENTS ARE NOT RELEVANT TO QUESTION, LLM FALLBACK---")
+        return "llm_fallback"
+    else:
+        # We have relevant documents, so generate answer
+        print("---DECISION: GENERATE---")
+        return "generate"
+
+def grade_generation_v_documents_and_question(state):
+    """
+    Determines whether the generation is grounded in the document and answers question.
+
+    Args:
+        state (dict): The current graph state
+
+    Returns:
+        str: Decision for next node to call
+    """
+
+    print("---CHECK HALLUCINATIONS---")
+    question = state["question"]
+    documents = state["documents"]
+    generation = state["generation"]
+
+    score = hallucination_grader.invoke({"documents": documents, "generation": generation})
+    grade = score.binary_score
+
+    # Check hallucination
+    if grade == "yes":
+        print("---DECISION: GENERATION IS GROUNDED IN DOCUMENTS---")
+        # Check question-answering
+        print("---GRADE GENERATION vs QUESTION---")
+        score = answer_grader.invoke({"question": question,"generation": generation})
+        grade = score.binary_score
+        if grade == "yes":
+            print("---DECISION: GENERATION ADDRESSES QUESTION---")
+            return "useful"
+        else:
+            print("---DECISION: GENERATION DOES NOT ADDRESS QUESTION---")
+            return "not useful"
+    else:
+        print("---DECISION: GENERATION IS NOT GROUNDED IN DOCUMENTS, RE-TRY---")
+        return "not supported"
+# def llm_fallback(state):
+#     """
+#     Generate answer using the LLM w/o vectorstore
+
+#     Args:
+#         state (dict): The current graph state
+
+#     Returns:
+#         state (dict): New key added to state, generation, that contains LLM generation
+#     """
+#     print("---LLM Fallback Activated---")
+#     question = state["question"]
+#     generation = test_query_chain.invoke({"question": question})
+#     return {"question": question, "generation": generation}
+
+# workflow.add_node("llm_fallback", llm_fallback) # llm
+
+# workflow.set_entry_point("llm_fallback")
+# workflow.add_edge("llm_fallback", END)
+
+# workflow = StateGraph(GraphState)
+# graph = workflow.compile()
+
+
+# Build Graph
+from langgraph.graph import END, StateGraph
+
+workflow = StateGraph(GraphState)
+
+# Define the nodes
+workflow.add_node("sql_database_search", sql_database_search) # database search
+workflow.add_node("retrieve", retrieve) # rag retrieve
+workflow.add_node("grade_documents", grade_documents) # grade documents
+workflow.add_node("generate", generate) # rag generatae
+# workflow.add_node("transform_query", transform_query) # transform_query
 workflow.add_node("llm_fallback", llm_fallback) # llm
 
-workflow.set_entry_point("llm_fallback")
+
+# Build graph
+workflow.set_conditional_entry_point(
+    route_question,
+    {
+        "sql_database_search": "sql_database_search",
+        "vectorstore": "retrieve",
+        "llm_fallback": "llm_fallback",
+
+    },
+)
+workflow.add_edge("sql_database_search", "generate")
+workflow.add_edge("retrieve", "grade_documents")
+workflow.add_conditional_edges(
+    "grade_documents",
+    decide_to_generate,
+    {
+        "sql_database_search": "sql_database_search",
+        "generate": "generate",
+        "llm_fallback": "llm_fallback"
+    },
+)
+# workflow.add_edge("generate", "retrieve")
+workflow.add_conditional_edges(
+    "generate",
+    grade_generation_v_documents_and_question,
+    {
+        "not supported": "llm_fallback",
+        "useful": END,
+        "not useful": "llm_fallback",
+    },
+)
+
 workflow.add_edge("llm_fallback", END)
+# TODO: Add edge that grades llm_fallback answer which doesn't mention AI Assistant, and only mentions rephrase question and transferred to live agent
 
 graph = workflow.compile()
+
 
 app = FastAPI(
     title="LangChain Server",
@@ -298,14 +544,14 @@ def root():
     }
 
 
-@app.get("/test")
-def retrieve_test():
-    generation = agent_executor.invoke(
-    "Who are the top 3 best selling artists?"
-)
-    return {
-        "message": generation,
-    }
+# @app.get("/test")
+# def retrieve_test():
+#     generation = agent_executor.invoke(
+#     "Who are the top 3 best selling artists?"
+# )
+#     return {
+#         "message": generation,
+#     }
     
     # generation = rag_chain.invoke({"context": docs, "question": "what is AG1"})
     # return {
