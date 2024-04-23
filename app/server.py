@@ -134,6 +134,103 @@ grade_prompt = ChatPromptTemplate.from_messages(
 retrieval_grader = grade_prompt | structured_llm_grader
 
 
+### Generation chain for synthesising full context
+
+from langchain import hub
+from langchain_core.output_parsers import StrOutputParser
+
+# Prompt
+prompt = hub.pull("rlm/rag-prompt")
+print(prompt)
+# LLM
+llm = ChatCohere(model="command-r", temperature=0)
+
+# Post-processing
+def format_docs(docs):
+    return "\n\n".join(doc.page_content for doc in docs)
+
+# Chain
+rag_chain = prompt | llm | StrOutputParser()
+
+
+### Hallucination Grader 
+
+# Data model
+class GradeHallucinations(BaseModel):
+    """Binary score for hallucination present in generation answer."""
+
+    binary_score: str = Field(description="Answer is grounded in the facts, 'yes' or 'no'")
+
+# LLM with function call 
+llm = ChatCohere(model="command-r", temperature=0)
+structured_llm_grader = llm.with_structured_output(GradeHallucinations)
+
+# Prompt 
+system = """You are a grader assessing whether an LLM generation is grounded in / supported by a set of retrieved facts. \n 
+     Give a binary score 'yes' or 'no'. 'Yes' means that the answer is grounded in / supported by the set of facts."""
+hallucination_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", system),
+        ("human", "Set of facts: \n\n {documents} \n\n LLM generation: {generation}"),
+    ]
+)
+
+hallucination_grader = hallucination_prompt | structured_llm_grader
+# hallucination_grader.invoke({"documents": docs, "generation": generation})
+
+
+### Answer Grader 
+
+# Data model
+class GradeAnswer(BaseModel):
+    """Binary score to assess answer addresses question."""
+
+    binary_score: str = Field(description="Answer addresses the question, 'yes' or 'no'")
+
+# LLM with function call 
+llm = ChatCohere(model="command-r", temperature=0)
+structured_llm_grader = llm.with_structured_output(GradeAnswer)
+
+# Prompt 
+system = """You are a grader assessing whether an answer addresses / resolves a question \n 
+     Give a binary score 'yes' or 'no'. Yes' means that the answer resolves the question."""
+answer_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", system),
+        ("human", "User question: \n\n {question} \n\n LLM generation: {generation}"),
+    ]
+)
+
+answer_grader = answer_prompt | structured_llm_grader
+# answer_grader.invoke({"question": question,"generation": generation})
+
+
+### LLM fallback
+
+from langchain import hub
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import HumanMessage
+
+
+# Preamble
+preamble = """You are a fallback customer support assistant. You will be given a question you cannot answer based on internal knowledge. Suggest a way to rephrase their question in a way that relates to information regarding their most online order or product information. Reply the user politely that their request will be transferred to a live agent"""
+
+# LLM
+llm = ChatCohere(model_name="command-r", temperature=0).bind(preamble=preamble)
+
+# Prompt
+prompt = lambda x: ChatPromptTemplate.from_messages(
+    [
+        HumanMessage(
+            f"Question: {x['question']} \nAnswer: "
+        )
+    ]
+)
+
+# Chain
+llm_chain = prompt | llm | StrOutputParser()
+
+
 from langgraph.graph import END, StateGraph
 from typing_extensions import TypedDict
 from typing import List
@@ -189,16 +286,26 @@ def root():
 
 @app.get("/test")
 def retrieve_test():
-    # question = "what is the shipping status of my order?"
-    question = "what is agent memory?"
-    docs = retriever.get_relevant_documents(question)
-    doc_txt = docs[1].page_content
-    print(doc_txt)
-    response = retrieval_grader.invoke({"question": question, "document": doc_txt})
-
+    question = "what is AG1?"
+    generation = llm_chain.invoke({"question": question})
     return {
-        "message": response,
+        "message": generation,
     }
+    
+    # generation = rag_chain.invoke({"context": docs, "question": "what is AG1"})
+    # return {
+    #     "message": generation,
+    # }
+
+    # question = "what is AG1?"
+    # question = "what is agent memory?"
+    # docs = retriever.get_relevant_documents(question)
+    # doc_txt = docs[1].page_content
+    # print(doc_txt)
+    # response = retrieval_grader.invoke({"question": question, "document": doc_txt})
+    # return {
+    #     "message": response,
+    # }
     
     # response = question_router.invoke({"question": "What ingredients does AG1 contain?"})
     # return {
