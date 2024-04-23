@@ -230,6 +230,7 @@ prompt = lambda x: ChatPromptTemplate.from_messages(
 llm_chain = prompt | llm | StrOutputParser()
 
 
+# SQL Agent
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_openai import AzureChatOpenAI
 llm = AzureChatOpenAI(
@@ -240,8 +241,7 @@ from langchain_community.utilities import SQLDatabase
 
 db = SQLDatabase.from_uri("sqlite:///Chinook.db")
 # print(db.dialect)
-print(db.get_usable_table_names())
-# db.run("SELECT * FROM Artist LIMIT 10;")
+# print(db.get_usable_table_names())
 agent_executor = create_sql_agent(llm, db=db, agent_type="openai-functions", verbose=True)
 
 
@@ -260,7 +260,7 @@ class GraphState(TypedDict):
     """
     question : str
     generation : str
-    # documents : List[str]
+    documents : List[str]
 
 workflow = StateGraph(GraphState)
 def llm_fallback(state):
