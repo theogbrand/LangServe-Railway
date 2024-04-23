@@ -205,7 +205,7 @@ answer_grader = answer_prompt | structured_llm_grader
 # answer_grader.invoke({"question": question,"generation": generation})
 
 
-### LLM fallback
+### LLM fallback Chain
 
 from langchain import hub
 from langchain_core.output_parsers import StrOutputParser
@@ -227,8 +227,22 @@ prompt = lambda x: ChatPromptTemplate.from_messages(
     ]
 )
 
-# Chain
 llm_chain = prompt | llm | StrOutputParser()
+
+
+from langchain_community.agent_toolkits import create_sql_agent
+from langchain_openai import AzureChatOpenAI
+llm = AzureChatOpenAI(
+    deployment_name="pjf-dpo-turbo-35",
+    api_version="2024-03-01-preview"
+)
+from langchain_community.utilities import SQLDatabase
+
+db = SQLDatabase.from_uri("sqlite:///Chinook.db")
+# print(db.dialect)
+print(db.get_usable_table_names())
+# db.run("SELECT * FROM Artist LIMIT 10;")
+agent_executor = create_sql_agent(llm, db=db, agent_type="openai-functions", verbose=True)
 
 
 from langgraph.graph import END, StateGraph
@@ -286,8 +300,9 @@ def root():
 
 @app.get("/test")
 def retrieve_test():
-    question = "what is AG1?"
-    generation = llm_chain.invoke({"question": question})
+    generation = agent_executor.invoke(
+    "Who are the top 3 best selling artists?"
+)
     return {
         "message": generation,
     }
