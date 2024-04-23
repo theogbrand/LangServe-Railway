@@ -18,11 +18,7 @@ anthropic_Api_Key: str = os.environ["ANTHROPIC_API_KEY"]
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.messages import HumanMessage
 
-
-# LLM
 llm = ChatAnthropic()
-
-# Prompt
 prompt = lambda x: ChatPromptTemplate.from_messages(
     [
         HumanMessage(
@@ -31,24 +27,21 @@ prompt = lambda x: ChatPromptTemplate.from_messages(
     ]
 )
 
+# Basic Test Query Chain
+test_query_chain = prompt | llm | StrOutputParser()
 
-### Build Index
 
+### Build Documents Index
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_community.vectorstores import Chroma
 from langchain_openai import AzureOpenAIEmbeddings
 
-# from langchain_openai import OpenAIEmbeddings
-### from langchain_cohere import CohereEmbeddings
-
-# Set embeddings
 embd = AzureOpenAIEmbeddings(
     azure_deployment="ada_gcal",
     openai_api_version="2024-02-01",
 )
 
-# Docs to index
 urls = [
     # "https://lilianweng.github.io/posts/2023-06-23-agent/",
     # "https://lilianweng.github.io/posts/2023-03-15-prompt-engineering/",
@@ -78,10 +71,7 @@ vectorstore = Chroma.from_documents(
 retriever = vectorstore.as_retriever()
 
 
-
 ### Router
-from typing import Literal
-
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_cohere import ChatCohere
@@ -113,18 +103,35 @@ route_prompt = ChatPromptTemplate.from_messages(
         ("human", "{question}"),
     ]
 )
-
+# Question Router
 question_router = route_prompt | structured_llm_router
-# response = question_router.invoke({"question": "Where is my order?"})
-# print(response.response_metadata['tool_calls'])
-# response = question_router.invoke({"question": "What ingredients does AG1 contain?"})
-# print(response.response_metadata['tool_calls'])
-# response = question_router.invoke({"question": "Hi how are you?"})
-# print('tool_calls' in response.response_metadata)
 
 
-# Chain
-test_query_chain = prompt | llm | StrOutputParser()
+### Retrieval Grader
+
+# Data model
+class GradeDocuments(BaseModel):
+    """Binary score for relevance check on retrieved documents."""
+
+    binary_score: str = Field(description="Documents are relevant to the question, 'yes' or 'no'")
+
+# LLM with function call 
+llm = ChatCohere(model="command-r", temperature=0)
+structured_llm_grader = llm.with_structured_output(GradeDocuments)
+
+# Prompt 
+system = """You are a grader assessing relevance of a retrieved document to a user question. \n 
+    If the document contains keyword(s) or semantic meaning related to the user question, grade it as relevant. \n
+    It does not need to be a stringent test. The goal is to filter out erroneous retrievals. \n
+    Give a binary score 'yes' or 'no' score to indicate whether the document is relevant to the question."""
+grade_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", system),
+        ("human", "Retrieved document: \n\n {document} \n\n User question: {question}"),
+    ]
+)
+
+retrieval_grader = grade_prompt | structured_llm_grader
 
 
 from langgraph.graph import END, StateGraph
@@ -182,10 +189,21 @@ def root():
 
 @app.get("/test")
 def retrieve_test():
-    response = question_router.invoke({"question": "What ingredients does AG1 contain?"})
+    # question = "what is the shipping status of my order?"
+    question = "what is agent memory?"
+    docs = retriever.get_relevant_documents(question)
+    doc_txt = docs[1].page_content
+    print(doc_txt)
+    response = retrieval_grader.invoke({"question": question, "document": doc_txt})
+
     return {
-        "message": response.response_metadata['tool_calls'],
+        "message": response,
     }
+    
+    # response = question_router.invoke({"question": "What ingredients does AG1 contain?"})
+    # return {
+    #     "message": response.response_metadata['tool_calls'],
+    # }
 
     # question = "agent memory?"
     # docs = retriever.get_relevant_documents(question)
