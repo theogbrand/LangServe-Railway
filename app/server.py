@@ -31,6 +31,53 @@ prompt = lambda x: ChatPromptTemplate.from_messages(
     ]
 )
 
+
+### Build Index
+
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import WebBaseLoader
+from langchain_community.vectorstores import Chroma
+from langchain_openai import AzureOpenAIEmbeddings
+
+# from langchain_openai import OpenAIEmbeddings
+### from langchain_cohere import CohereEmbeddings
+
+# Set embeddings
+embd = AzureOpenAIEmbeddings(
+    azure_deployment="ada_gcal",
+    openai_api_version="2024-02-01",
+)
+
+# Docs to index
+urls = [
+    # "https://lilianweng.github.io/posts/2023-06-23-agent/",
+    # "https://lilianweng.github.io/posts/2023-03-15-prompt-engineering/",
+    # "https://lilianweng.github.io/posts/2023-10-25-adv-attack-llm/",
+    "https://drinkag1.com/foundational-nutrition-education",
+    "https://drinkag1.com/about-ag1/quality-standards/ctr",
+    "https://drinkag1.com/about-ag1/ingredients/ctr"
+
+]
+
+# Load
+docs = [WebBaseLoader(url).load() for url in urls]
+docs_list = [item for sublist in docs for item in sublist]
+
+# Split
+text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+    chunk_size=500, chunk_overlap=0
+)
+doc_splits = text_splitter.split_documents(docs_list)
+
+# # Add to vectorstore
+vectorstore = Chroma.from_documents(
+    documents=doc_splits,
+    collection_name="rag_adapt",
+    embedding=embd,
+)
+retriever = vectorstore.as_retriever()
+
+
 # Chain
 test_query_chain = prompt | llm | StrOutputParser()
 
@@ -85,6 +132,15 @@ app = FastAPI(
 def root():
     return {
         "message": "serving healthy",
+    }
+
+
+@app.get("/test")
+def retrieve_test():
+    question = "agent memory?"
+    docs = retriever.get_relevant_documents(question)
+    return {
+        "message": docs[1].page_content,
     }
 
 
