@@ -239,7 +239,7 @@ llm = AzureChatOpenAI(
 )
 from langchain_community.utilities import SQLDatabase
 
-db = SQLDatabase.from_uri("sqlite:///Chinook.db")
+db = SQLDatabase.from_uri("sqlite:///Orders.db")
 # print(db.dialect)
 # print(db.get_usable_table_names())
 agent_executor = create_sql_agent(llm, db=db, agent_type="openai-functions", verbose=True)
